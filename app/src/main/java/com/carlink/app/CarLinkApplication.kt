@@ -23,6 +23,7 @@ class CarLinkApplication : App() {
 
     override fun onCreate() {
         // Before App.onCreate: it creates the engine's notification channels from these names.
+        HostIntegration.projectionLaunchOptions = com.carlink.core.connection.RelayDisplay::options
         brandEngines()
         super.onCreate()
         // The connection backend (:carlink-core): engine hooks, USB watching, the session log.

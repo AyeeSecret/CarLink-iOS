@@ -697,7 +697,7 @@ class AapService : Service(), UsbReceiver.Listener {
                 val projectionIntent = AapProjectionActivity.intent(this).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                 }
-                startActivity(projectionIntent)
+                startActivity(projectionIntent, HostIntegration.projectionLaunchOptions?.invoke(this))
             } catch (e: Exception) {
                 AppLog.e("WakeDetect: failed to launch projection: ${e.message}")
             }
@@ -1069,13 +1069,13 @@ class AapService : Service(), UsbReceiver.Listener {
         AppLog.i("Projection launch: strategy=$strategy overlay=$canOverlay appVisible=$appVisible") // CarLink
         when (strategy) {
             ActivityLaunchPolicy.LaunchStrategy.DIRECT -> {
-                try { startActivity(intent) }
+                try { startActivity(intent, HostIntegration.projectionLaunchOptions?.invoke(this)) }
                 catch (e: Exception) { AppLog.e("Projection launch failed: ${e.message}") }
             }
             ActivityLaunchPolicy.LaunchStrategy.OVERLAY -> {
                 if (!launchViaOverlayTrampoline(intent)) {
                     AppLog.w("Projection overlay trampoline failed, trying direct")
-                    try { startActivity(intent) }
+                    try { startActivity(intent, HostIntegration.projectionLaunchOptions?.invoke(this)) }
                     catch (e: Exception) { AppLog.e("Projection direct fallback failed: ${e.message}") }
                 }
             }
@@ -1086,7 +1086,7 @@ class AapService : Service(), UsbReceiver.Listener {
     private fun launchProjectionViaNotification(launchIntent: Intent) {
         val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or
             (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-        val fullScreenPi = PendingIntent.getActivity(this, PROJECTION_LAUNCH_NOTIFICATION_ID, launchIntent, piFlags)
+        val fullScreenPi = PendingIntent.getActivity(this, PROJECTION_LAUNCH_NOTIFICATION_ID, launchIntent, piFlags, HostIntegration.projectionLaunchOptions?.invoke(this))
 
         val notification = NotificationCompat.Builder(this, App.bootStartChannel)
             .setSmallIcon(R.drawable.ic_stat_aa)
@@ -2951,7 +2951,9 @@ class AapService : Service(), UsbReceiver.Listener {
         val view = View(this)
         return try {
             wm.addView(view, params)
-            startActivity(launchIntent)
+            val options = if (launchIntent.component?.className == AapProjectionActivity::class.java.name)
+                HostIntegration.projectionLaunchOptions?.invoke(this) else null
+            startActivity(launchIntent, options)
             AppLog.i("Overlay trampoline: startActivity succeeded")
             true
         } catch (e: Exception) {

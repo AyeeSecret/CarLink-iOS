@@ -175,7 +175,9 @@ private struct RelayView: View {
         do {
             let (_, response) = try await session.data(for: setup)
             guard (response as? HTTPURLResponse)?.statusCode == 202 else {
-                status = "Check the relay code and update both apps."
+                status = (response as? HTTPURLResponse)?.statusCode == 503
+                    ? "The S22 could not create the relay display. Restart the relay."
+                    : "Check the relay code and update both apps."
                 endpoint = nil
                 return
             }
@@ -195,7 +197,7 @@ private struct RelayView: View {
                         status = ""
                     }
                 case 204:
-                    status = "Waiting for screen capture…"
+                    status = "Display ready. Waiting for the projection engine to draw its first frame…"
                 case 404:
                     endpoint = nil
                     status = "Check the relay code on the S22."
@@ -214,4 +216,3 @@ private struct RelayView: View {
         }
     }
 }
-

@@ -11,6 +11,8 @@ import com.andrerinas.openheadunit.main.MainActivity
  * and media session carry, and what happens to its toasts. Standalone DiAuto keeps its defaults.
  */
 object HostIntegration {
+    // CarLink selects the iPad display when launching the projection task.
+    @Volatile var projectionLaunchOptions: ((Context) -> android.os.Bundle?)? = null
     @Volatile
     @JvmStatic
     var homeActivity: Class<out Activity> = MainActivity::class.java

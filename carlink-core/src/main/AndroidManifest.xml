@@ -142,7 +142,7 @@
         <!-- ============================== Android Auto engine (DiAuto), ":aa" process ============================== -->
 
         <!-- Not exported (DA§10.9): only the backend's own explicit intents open the projection. -->
-        <activity android:name="com.andrerinas.openheadunit.aap.AapProjectionActivity" android:exported="false" android:process=":aa" tools:node="merge" tools:replace="android:exported" />
+        <activity android:name="com.andrerinas.openheadunit.aap.AapProjectionActivity" android:taskAffinity="${applicationId}.projection" android:exported="false" android:process=":aa" tools:node="merge" tools:replace="android:exported" />
         <!-- Kept because DiAuto toggles it at runtime; never matched by the system any more. -->
         <activity android:name="com.andrerinas.openheadunit.app.UsbAttachedActivity" android:exported="false" android:process=":aa" tools:node="merge" tools:replace="android:exported">
             <intent-filter tools:node="removeAll" />

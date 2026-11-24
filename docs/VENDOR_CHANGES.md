@@ -1,5 +1,7 @@
 # Changes to the vendored engines
 
+DiAuto's HostIntegration, AapService and AapBroadcastReceiver pass the host-selected display to projection launches, including the notification and overlay paths. Standalone builds keep their default launch options.
+
 CarLink imported both engines with `git subtree`, keeping their history:
 
 | Path | Upstream | Engine |

@@ -431,7 +431,7 @@ internal class DiPlayEngineHooks(private val app: Context) : CarPlayEngineHooks 
                 override fun onActivityResumed(activity: Activity) {
                     application.unregisterActivityLifecycleCallbacks(this)
                     if (pendingOpen === this) pendingOpen = null
-                    runCatching { activity.startActivity(host) }
+                    runCatching { activity.startActivity(host, RelayDisplay.options(activity)) }
                         .onFailure { Log.w("CarLink-CarPlay", "deferred CarPlay open failed: ${it.javaClass.simpleName}") }
                 }
                 override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
@@ -443,7 +443,7 @@ internal class DiPlayEngineHooks(private val app: Context) : CarPlayEngineHooks 
             }.also { application.registerActivityLifecycleCallbacks(it) }
             return null
         }
-        return runCatching { app.startActivity(host) }.exceptionOrNull()
+        return runCatching { app.startActivity(host, RelayDisplay.options(app)) }.exceptionOrNull()
     }
 
     // Only the caller's own processes are listed; IMPORTANCE_FOREGROUND is a resumed activity.

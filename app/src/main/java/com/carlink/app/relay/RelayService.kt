@@ -160,11 +160,15 @@ class RelayService : Service() {
                                 val size = path[1].substringAfter("/display/$token/").split(',').map { it.toIntOrNull() ?: 0 }
                                 if (size.size == 3 && size[0] in 320..4096 && size[1] in 240..3072 &&
                                     size[0].toLong() * size[1] <= 6_000_000 && size[2] in 120..480) {
-                                    Handler(Looper.getMainLooper()).post {
-                                        if (!server.isClosed) runCatching { createDisplay(size[0], size[1], size[2]) }
-                                            .onFailure { Log.e("CarLinkRelay", "Display unavailable", it); stopSelf() }
+                                    val setup = java.util.concurrent.FutureTask<Boolean> {
+                                        if (!server.isClosed) createDisplay(size[0], size[1], size[2])
+                                        display?.display?.isValid == true
                                     }
-                                    client.getOutputStream().write("HTTP/1.1 202 Accepted\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                                    Handler(Looper.getMainLooper()).post(setup)
+                                    val ready = runCatching { setup.get(4, java.util.concurrent.TimeUnit.SECONDS) }
+                                        .onFailure { Log.e("CarLinkRelay", "Display creation failed", it) }.getOrDefault(false)
+                                    val status = if (ready) "202 Accepted" else "503 Service Unavailable"
+                                    client.getOutputStream().write("HTTP/1.1 $status\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".toByteArray())
                                     return@use
                                 }
                             }
