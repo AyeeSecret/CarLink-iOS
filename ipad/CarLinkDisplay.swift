@@ -150,7 +150,7 @@ private struct RelayView: View {
                         samples[index] = Float(Int16(littleEndian: pcm)) / 32768
                     }
                 }
-                player.scheduleBuffer(buffer)
+                player.scheduleBuffer(buffer, completionHandler: nil)
                 try await Task.sleep(for: .milliseconds(Double(count) / 48))
             }
         } catch {
@@ -214,3 +214,4 @@ private struct RelayView: View {
         }
     }
 }
+
