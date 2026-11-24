@@ -23,7 +23,7 @@ jobs:
           packages: platform-tools
       - name: Build test APK
         run: |
-          sdkmanager "platforms;android-37"
+          sdkmanager "platforms;android-37.0"
           ./gradlew :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v6
         with:
