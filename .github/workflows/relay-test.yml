@@ -1,7 +1,7 @@
 name: Build relay test apps
 on:
   push:
-    branches: [ipad-relay, ipad-relay-test]
+    branches: ['ipad-relay*']
   workflow_dispatch:
 
 permissions:
@@ -19,6 +19,8 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Build test APK
         run: |
           sdkmanager "platforms;android-37"
