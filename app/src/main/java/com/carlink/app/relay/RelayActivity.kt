@@ -16,7 +16,7 @@ class RelayActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        token = savedInstanceState?.getString("token") ?: newToken()
+        token = RelayService.activeCode ?: savedInstanceState?.getString("token") ?: newToken()
         instructions = TextView(this)
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -25,8 +25,9 @@ class RelayActivity : Activity() {
             addView(Button(context).apply {
                 text = "Start screen relay"
                 setOnClickListener {
-                    val manager = getSystemService(MediaProjectionManager::class.java)
-                    startActivityForResult(manager.createScreenCaptureIntent(), 1)
+                    if (android.os.Build.VERSION.SDK_INT >= 29 && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 2)
+                    } else requestCapture()
                 }
             })
             addView(Button(context).apply {
@@ -51,6 +52,16 @@ class RelayActivity : Activity() {
         super.onSaveInstanceState(outState)
     }
 
+    private fun requestCapture() {
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        startActivityForResult(manager.createScreenCaptureIntent(), 1)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2) requestCapture()
+    }
+
     @Deprecated("Uses the platform screen capture consent result.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -61,11 +72,11 @@ class RelayActivity : Activity() {
     }
 
     private fun showInstructions() {
-        instructions.text = "Join this phone's hotspot on the iPad. Enter its Router address, port 8765, " +
-            "and this code in the iPad app. Share the entire screen, then open CarLink. " +
+        instructions.text = "Join this phone's hotspot on the iPad and enter this code in CarLink Display. " +
+            "Approve capture for audio, connect the iPad, then open CarLink. " +
             "Stop the relay when done. Screen images travel unencrypted over your hotspot.\n\nCode: $token"
     }
 
     private fun newToken(): String =
-        (SecureRandom().nextInt(900_000_000) + 100_000_000).toString()
+        (SecureRandom().nextInt(9_000) + 1_000).toString()
 }

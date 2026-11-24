@@ -53,6 +53,7 @@ object ProjectionVisibility {
     fun installInMainProcess(app: Application) {
         if (installed) return
         installed = true
+        installRelayTouch(app)
         app.registerActivityLifecycleCallbacks(object : LifecycleAdapter() {
             override fun onActivityResumed(activity: Activity) = update(activity, resumed = true)
             override fun onActivityPaused(activity: Activity) = update(activity, resumed = false)
@@ -68,6 +69,7 @@ object ProjectionVisibility {
 
     /** ":aa" process: reports AapProjectionActivity's resume and pause to the main process. */
     fun installInEngineProcess(app: Application) {
+        installRelayTouch(app)
         app.registerActivityLifecycleCallbacks(object : LifecycleAdapter() {
             override fun onActivityResumed(activity: Activity) = report(activity, true)
             override fun onActivityPaused(activity: Activity) = report(activity, false)
@@ -112,6 +114,58 @@ object ProjectionVisibility {
     private fun setProjection(engine: Engine, visible: Boolean) {
         _front.value = _front.value.let { it.copy(projections = if (visible) it.projections + engine else it.projections - engine) }
     }
+
+    private fun installRelayTouch(app: Application) {
+        var current: Activity? = null
+        val displays = app.getSystemService(android.hardware.display.DisplayManager::class.java)
+        fun route(activity: Activity) {
+            if (android.os.Build.VERSION.SDK_INT < 26) return
+            val target = displays.displays.firstOrNull { it.name == "CarLink Relay" } ?: return
+            if (activity.window.decorView.display?.displayId == target.displayId) return
+            val options = android.app.ActivityOptions.makeBasic().setLaunchDisplayId(target.displayId)
+            runCatching {
+                activity.startActivity(Intent(activity.intent).setClass(activity, activity.javaClass)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), options.toBundle())
+            }.onFailure { android.util.Log.w("CarLinkRelay", "Projection display unavailable", it) }
+        }
+        displays.registerDisplayListener(object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) { current?.let { route(it) } }
+            override fun onDisplayChanged(displayId: Int) {}
+            override fun onDisplayRemoved(displayId: Int) {}
+        }, android.os.Handler(android.os.Looper.getMainLooper()))
+        app.registerActivityLifecycleCallbacks(object : LifecycleAdapter() {
+            override fun onActivityResumed(activity: Activity) {
+                if (activity is CarPlayHostActivity || activity is AapProjectionActivity) {
+                    current = activity
+                    route(activity)
+                }
+            }
+            override fun onActivityPaused(activity: Activity) {
+                if (current === activity) current = null
+            }
+        })
+        ContextCompat.registerReceiver(app, object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val activity = current ?: return
+                val view = activity.window.decorView
+                if (view.display?.name != "CarLink Relay") return
+                val points = intent.getFloatArrayExtra("points") ?: return
+                if (points.size != 4 || points.any { !it.isFinite() || it !in 0f..1f }) return
+                val start = android.os.SystemClock.uptimeMillis()
+                fun dispatch(action: Int, index: Int) {
+                    val event = android.view.MotionEvent.obtain(start, android.os.SystemClock.uptimeMillis(),
+                        action, points[index] * (view.width - 1), points[index + 1] * (view.height - 1), 0)
+                    event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                    try { activity.dispatchTouchEvent(event) } finally { event.recycle() }
+                }
+                dispatch(android.view.MotionEvent.ACTION_DOWN, 0)
+                if (points[0] != points[2] || points[1] != points[3]) dispatch(android.view.MotionEvent.ACTION_MOVE, 2)
+                dispatch(android.view.MotionEvent.ACTION_UP, 2)
+            }
+        }, IntentFilter(RELAY_TOUCH), ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
+
+    const val RELAY_TOUCH = "com.carlink.app.RELAY_TOUCH"
 
     private abstract class LifecycleAdapter : Application.ActivityLifecycleCallbacks {
         override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
