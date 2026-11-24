@@ -1,7 +1,7 @@
 name: Build relay test apps
 on:
   push:
-    branches: [ipad-relay]
+    branches: [ipad-relay, ipad-relay-test]
   workflow_dispatch:
 
 permissions:
