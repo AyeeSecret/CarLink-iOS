@@ -1,0 +1,53 @@
+name: Build relay test apps
+on:
+  push:
+    branches: [ipad-relay]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build test APK
+        run: |
+          sdkmanager "platforms;android-37"
+          ./gradlew :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v6
+        with:
+          name: CarLink-S22
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+  ipad:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build iPad client
+        run: |
+          set -euo pipefail
+          app=build/Payload/CarLinkDisplay.app
+          mkdir -p "$app"
+          cp ipad/Info.plist "$app/Info.plist"
+          plutil -lint "$app/Info.plist"
+          sdk=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun --sdk iphoneos swiftc -parse-as-library -target arm64-apple-ios18.0 -sdk "$sdk" \
+            -Xlinker -rpath -Xlinker /usr/lib/swift \
+            ipad/CarLinkDisplay.swift -o "$app/CarLinkDisplay"
+          codesign --force --sign - "$app"
+          (cd build && zip -qr CarLinkDisplay.ipa Payload)
+      - uses: actions/upload-artifact@v6
+        with:
+          name: CarLink-iPad
+          path: build/CarLinkDisplay.ipa
+          if-no-files-found: error

@@ -20,6 +20,8 @@
     <!-- The in-app updater (update/): asks GitHub for the latest release and installs a verified
          APK with PackageInstaller. Both are also declared by the engines; listed here for CarLink. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- "Report a problem on GitHub" asks whether any browser opens web links (Android 11+ package visibility). -->
@@ -65,6 +67,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".relay.RelayActivity" android:exported="true" android:label="CarLink Relay">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name=".relay.RelayService" android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <!-- Lets Macrobenchmark and Perfetto trace the release build from adb (no debugging, no
              data access); Android's recommended setting for measuring release builds. -->
