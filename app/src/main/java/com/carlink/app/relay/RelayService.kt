@@ -28,7 +28,7 @@ class RelayService : Service() {
     }
     private var projection: MediaProjection? = null
     private var display: VirtualDisplay? = null
-    private var reader: ImageReader? = null
+    @Volatile private var reader: ImageReader? = null
     private var worker: HandlerThread? = null
     private var server: ServerSocket? = null
     @Volatile private var latest: ByteArray? = null
@@ -98,6 +98,9 @@ class RelayService : Service() {
             }
             media.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() { stopSelf() }
+                override fun onCapturedContentResize(width: Int, height: Int) {
+                    if (display != null) configureCapture(width, height, resources.displayMetrics.densityDpi)
+                }
             }, Handler(Looper.getMainLooper()))
             Thread({ serve(socket, token) }, "CarLink relay HTTP").start()
         } catch (error: Exception) {
@@ -111,11 +114,19 @@ class RelayService : Service() {
     private fun createDisplay() {
             val metrics = android.util.DisplayMetrics()
             getSystemService(android.view.WindowManager::class.java).defaultDisplay.getRealMetrics(metrics)
-            val ratio = minOf(1.0, 1280.0 / maxOf(metrics.widthPixels, metrics.heightPixels))
-            val width = (metrics.widthPixels * ratio).toInt()
-            val height = (metrics.heightPixels * ratio).toInt()
+            configureCapture(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+    }
+
+    private fun configureCapture(sourceWidth: Int, sourceHeight: Int, density: Int) {
+            if (sourceWidth <= 0 || sourceHeight <= 0) return
+            val ratio = minOf(1.0, 1280.0 / maxOf(sourceWidth, sourceHeight))
+            val width = (sourceWidth * ratio).toInt()
+            val height = (sourceHeight * ratio).toInt()
             if (display != null) return
-            val thread = HandlerThread("CarLink capture").also { it.start() }
+            if (reader?.width == width && reader?.height == height) return
+            val thread = worker ?: HandlerThread("CarLink capture").also { it.start() }
+            val previousReader = reader
+            latest = null
             worker = thread
             val images = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
             reader = images
@@ -131,7 +142,7 @@ class RelayService : Service() {
                         padded.copyPixelsFromBuffer(plane.buffer)
                         val frame = Bitmap.createBitmap(padded, 0, 0, width, height)
                         try {
-                            latest = ByteArrayOutputStream().use {
+                            if (reader === source) latest = ByteArrayOutputStream().use {
                                 frame.compress(Bitmap.CompressFormat.JPEG, 75, it)
                                 it.toByteArray()
                             }
@@ -143,9 +154,17 @@ class RelayService : Service() {
                     }
                 }
             }, Handler(thread.looper))
-            display = checkNotNull(projection).createVirtualDisplay(
-                "CarLink Screen Capture", width, height, metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, images.surface, null, null)
+            val current = display
+            if (current == null) {
+                display = checkNotNull(projection).createVirtualDisplay(
+                    "CarLink Screen Capture", width, height, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, images.surface, null, null)
+            } else {
+                current.surface = null
+                current.resize(width, height, density)
+                current.surface = images.surface
+                Handler(thread.looper).post { previousReader?.close() }
+            }
     }
 
     private fun serve(server: ServerSocket, token: String) {

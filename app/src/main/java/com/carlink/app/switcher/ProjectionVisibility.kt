@@ -155,9 +155,19 @@ object ProjectionVisibility {
                 if (points.size != 4 || points.any { !it.isFinite() || it !in 0f..1f }) return
                 val start = android.os.SystemClock.uptimeMillis()
                 fun dispatch(action: Int, index: Int) {
+                    val pointer = android.view.MotionEvent.PointerProperties().apply {
+                        id = 0
+                        toolType = android.view.MotionEvent.TOOL_TYPE_FINGER
+                    }
+                    val position = android.view.MotionEvent.PointerCoords().apply {
+                        x = points[index] * (metrics.widthPixels - 1) - offset[0]
+                        y = points[index + 1] * (metrics.heightPixels - 1) - offset[1]
+                        pressure = if (action == android.view.MotionEvent.ACTION_UP) 0f else 1f
+                        size = 1f
+                    }
                     val event = android.view.MotionEvent.obtain(start, android.os.SystemClock.uptimeMillis(),
-                        action, points[index] * (metrics.widthPixels - 1) - offset[0], points[index + 1] * (metrics.heightPixels - 1) - offset[1], 0)
-                    event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                        action, 1, arrayOf(pointer), arrayOf(position), 0, 0, 1f, 1f, 0, 0,
+                        android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
                     try { activity.dispatchTouchEvent(event) } finally { event.recycle() }
                 }
                 dispatch(android.view.MotionEvent.ACTION_DOWN, 0)

@@ -11,6 +11,13 @@
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>MinimumOSVersion</key><string>18.0</string>
     <key>UIDeviceFamily</key><array><integer>2</integer></array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
     <key>UILaunchScreen</key><dict/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Connect to the CarLink screen relay on your Galaxy hotspot.</string>

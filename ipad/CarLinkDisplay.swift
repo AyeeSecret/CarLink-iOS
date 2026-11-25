@@ -41,9 +41,11 @@ private struct RelayView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             if let frame {
-                Image(uiImage: frame)
+                GeometryReader { viewport in
+                    let scale = min(viewport.size.width / frame.size.width, viewport.size.height / frame.size.height)
+                    Image(uiImage: frame)
                     .resizable()
-                    .scaledToFit()
+                    .frame(width: frame.size.width * scale, height: frame.size.height * scale)
                     .overlay {
                         GeometryReader { bounds in
                             Color.clear.contentShape(Rectangle())
@@ -57,10 +59,23 @@ private struct RelayView: View {
                                     var request = URLRequest(url: base.appendingPathComponent("touch")
                                         .appendingPathComponent(endpoint.lastPathComponent).appendingPathComponent(values))
                                     request.httpMethod = "POST"
-                                    URLSession.shared.dataTask(with: request).resume()
+                                    Task {
+                                        do {
+                                            let (_, response) = try await URLSession.shared.data(for: request)
+                                            if (response as? HTTPURLResponse)?.statusCode != 204 {
+                                                status = "The S22 rejected the touch."
+                                                showControls = true
+                                            }
+                                        } catch {
+                                            status = "Could not send touch to the S22."
+                                            showControls = true
+                                        }
+                                    }
                                 })
                         }
                     }
+                    .position(x: viewport.size.width / 2, y: viewport.size.height / 2)
+                }
             }
             if showControls {
                 VStack(spacing: 16) {
@@ -132,15 +147,20 @@ private struct RelayView: View {
             try session.setCategory(.playback)
             try session.setActive(true)
             try engine.start()
-            player.play()
+            var queued = 0
             while !Task.isCancelled {
+                if queued >= 4 {
+                    try await Task.sleep(for: .milliseconds(10))
+                    continue
+                }
                 let (data, response) = try await URLSession.shared.data(from: url)
                 guard let http = response as? HTTPURLResponse, http.statusCode != 404 else { return }
                 let count = data.count / 2
                 guard http.statusCode == 200, count > 0, count <= 3840,
                       let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: UInt32(count)),
                       let samples = buffer.floatChannelData?[0] else {
-                    try await Task.sleep(for: .milliseconds(15))
+                    if queued == 0 && player.isPlaying { player.stop() }
+                    try await Task.sleep(for: .milliseconds(10))
                     continue
                 }
                 buffer.frameLength = UInt32(count)
@@ -150,8 +170,11 @@ private struct RelayView: View {
                         samples[index] = Float(Int16(littleEndian: pcm)) / 32768
                     }
                 }
-                player.scheduleBuffer(buffer, completionHandler: nil)
-                try await Task.sleep(for: .milliseconds(Double(count) / 48))
+                queued += 1
+                player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
+                    Task { @MainActor in queued -= 1 }
+                }
+                if !player.isPlaying && queued >= 3 { player.play() }
             }
         } catch {
             if !Task.isCancelled { status = "Audio disconnected. Reconnect to retry." }
