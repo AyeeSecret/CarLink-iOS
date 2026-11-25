@@ -5,11 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.YuvImage
-import android.media.Image
-import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
@@ -22,7 +17,6 @@ import com.andrerinas.openheadunit.HostIntegration
 import com.andrerinas.openheadunit.aap.protocol.messages.TouchEvent
 import com.andrerinas.openheadunit.connection.CommManager
 import com.andrerinas.openheadunit.utils.HeadUnitScreenConfig
-import java.io.ByteArrayOutputStream
 import java.net.ServerSocket
 import java.util.concurrent.ArrayBlockingQueue
 
@@ -36,8 +30,7 @@ class RelayService : Service() {
     private val audio = ArrayBlockingQueue<ByteArray>(8)
     private var server: ServerSocket? = null
     private var worker: HandlerThread? = null
-    private var reader: ImageReader? = null
-    private var lastFrameAt = 0L
+    private var video: RelayVideoTexture? = null
     @Volatile private var latest: ByteArray? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -67,7 +60,7 @@ class RelayService : Service() {
     }
 
     private fun prepareDecoder(width: Int, height: Int, dpi: Int) {
-        if (reader != null) return
+        if (video != null) return
         val thread = HandlerThread("CarLink offscreen decoder").apply { start() }
         worker = thread
         // Android Auto negotiates a supported codec mode with a viewport derived from the iPad.
@@ -75,17 +68,13 @@ class RelayService : Service() {
         val scale = minOf(1.0, 1280.0 / maxOf(width, height))
         val captureWidth = (width * scale / 2).toInt() * 2
         val captureHeight = (height * scale / 2).toInt() * 2
-        val images = ImageReader.newInstance(captureWidth, captureHeight, ImageFormat.YUV_420_888, 3)
-        reader = images
-        images.setOnImageAvailableListener({ source ->
-            source.acquireLatestImage()?.use { image ->
-                val now = SystemClock.elapsedRealtime()
-                if (now - lastFrameAt >= 40) {
-                    lastFrameAt = now
-                    latest = encodeFrame(image)
-                }
-            }
-        }, Handler(thread.looper))
+        val handler = Handler(thread.looper)
+        val setup = java.util.concurrent.FutureTask {
+            RelayVideoTexture(captureWidth, captureHeight, handler) { latest = it }
+        }
+        handler.post(setup)
+        val target = setup.get()
+        video = target
         HostIntegration.headlessMetrics = DisplayMetrics().apply {
             widthPixels = width
             heightPixels = height
@@ -93,34 +82,7 @@ class RelayService : Service() {
             density = dpi / 160f
         }
         HostIntegration.headlessMediaPcm = ::receiveMediaAudio
-        HostIntegration.headlessSurface = images.surface
-    }
-
-    private fun encodeFrame(image: Image): ByteArray {
-        val width = image.width
-        val height = image.height
-        val nv21 = ByteArray(width * height * 3 / 2)
-        for (index in 0..2) {
-            val plane = image.planes[index]
-            val chroma = index != 0
-            val rows = if (chroma) height / 2 else height
-            val columns = if (chroma) width / 2 else width
-            val base = plane.buffer.position()
-            val destination = if (chroma) width * height + (2 - index) else 0
-            val step = if (chroma) 2 else 1
-            for (row in 0 until rows) {
-                val start = base + row * plane.rowStride
-                for (column in 0 until columns) {
-                    nv21[destination + (row * columns + column) * step] =
-                        plane.buffer.get(start + column * plane.pixelStride)
-                }
-            }
-        }
-        return ByteArrayOutputStream().use { output ->
-            YuvImage(nv21, ImageFormat.NV21, width, height, null)
-                .compressToJpeg(Rect(0, 0, width, height), 78, output)
-            output.toByteArray()
-        }
+        HostIntegration.headlessSurface = target.surface
     }
 
     private fun receiveMediaAudio(source: ByteArray, offset: Int, length: Int) {
@@ -179,7 +141,7 @@ class RelayService : Service() {
                                     size[0].toLong() * size[1] <= 6_000_000 && size[2] in 120..480) {
                                     val setup = java.util.concurrent.FutureTask<Boolean> {
                                         if (!server.isClosed) prepareDecoder(size[0], size[1], size[2])
-                                        reader?.surface?.isValid == true
+                                        video?.surface?.isValid == true
                                     }
                                     Handler(Looper.getMainLooper()).post(setup)
                                     val ready = runCatching { setup.get(4, java.util.concurrent.TimeUnit.SECONDS) }
@@ -234,10 +196,10 @@ class RelayService : Service() {
         HostIntegration.headlessSurface = null
         HostIntegration.headlessMetrics = null
         HostIntegration.headlessMediaPcm = null
-        if (reader != null) App.provide(this).videoDecoder.setSurface(null)
-        val images = reader
+        if (video != null) App.provide(this).videoDecoder.setSurface(null)
+        val texture = video
         worker?.let { thread ->
-            Handler(thread.looper).post { images?.close() }
+            Handler(thread.looper).post { texture?.close() }
             thread.quitSafely()
         }
         super.onDestroy()

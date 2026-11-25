@@ -233,7 +233,7 @@ private struct RelayView: View {
                 guard !Task.isCancelled else { return }
                 frame = nil
                 showControls = true
-                status = "Relay unavailable. Check the hotspot and screen sharing."
+                status = "Connection to the S22 relay lost. Reopen CarLink Relay and check the hotspot."
             }
             try? await Task.sleep(for: .milliseconds(35))
         }
