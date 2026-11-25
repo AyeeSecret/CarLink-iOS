@@ -20,7 +20,6 @@ import android.util.Log
 import com.andrerinas.openheadunit.App
 import com.andrerinas.openheadunit.HostIntegration
 import com.andrerinas.openheadunit.aap.protocol.messages.TouchEvent
-import com.andrerinas.openheadunit.aap.protocol.proto.Input.TouchEvent.PointerAction
 import com.andrerinas.openheadunit.connection.CommManager
 import com.andrerinas.openheadunit.utils.HeadUnitScreenConfig
 import java.io.ByteArrayOutputStream
@@ -28,6 +27,12 @@ import java.net.ServerSocket
 import java.util.concurrent.ArrayBlockingQueue
 
 class RelayService : Service() {
+    private companion object {
+        // Android Auto input protocol actions, from Input.TouchEvent.PointerAction.
+        const val TOUCH_DOWN = 0
+        const val TOUCH_UP = 1
+        const val TOUCH_MOVE = 2
+    }
     private val audio = ArrayBlockingQueue<ByteArray>(8)
     private var server: ServerSocket? = null
     private var worker: HandlerThread? = null
@@ -143,13 +148,13 @@ class RelayService : Service() {
         val width = HeadUnitScreenConfig.getNegotiatedWidth()
         val height = HeadUnitScreenConfig.getNegotiatedHeight()
         if (width < 1 || height < 1) return
-        fun send(action: PointerAction, index: Int) {
-            connection.send(TouchEvent(SystemClock.elapsedRealtime(), action,
-                (points[index] * (width - 1)).toInt(), (points[index + 1] * (height - 1)).toInt()))
+        fun send(action: Int, index: Int) {
+            connection.send(TouchEvent(SystemClock.elapsedRealtime(), action, 0,
+                listOf(Triple(0, (points[index] * (width - 1)).toInt(), (points[index + 1] * (height - 1)).toInt())))
         }
-        send(PointerAction.TOUCH_ACTION_DOWN, 0)
-        if (points[0] != points[2] || points[1] != points[3]) send(PointerAction.TOUCH_ACTION_MOVE, 2)
-        send(PointerAction.TOUCH_ACTION_UP, 2)
+        send(TOUCH_DOWN, 0)
+        if (points[0] != points[2] || points[1] != points[3]) send(TOUCH_MOVE, 2)
+        send(TOUCH_UP, 2)
     }
 
     private fun serve(server: ServerSocket, token: String) {
