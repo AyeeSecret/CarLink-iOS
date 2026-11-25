@@ -32,6 +32,10 @@ class RelayActivity : Activity() {
                 setOnClickListener { startActivity(Intent(context, HomeActivity::class.java)) }
             })
             addView(Button(context).apply {
+                text = "Darken S22 screen"
+                setOnClickListener { showDarkScreen() }
+            })
+            addView(Button(context).apply {
                 text = "Stop relay"
                 setOnClickListener {
                     stopService(Intent(context, RelayService::class.java))
@@ -42,6 +46,30 @@ class RelayActivity : Activity() {
         }
         setContentView(column)
         showInstructions()
+    }
+
+    private fun showDarkScreen() {
+        val content = findViewById<android.view.ViewGroup>(android.R.id.content)
+        val controls = content.getChildAt(0) ?: return
+        val previousBrightness = window.attributes.screenBrightness
+        val insets = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        val bars = androidx.core.view.WindowInsetsCompat.Type.systemBars()
+        content.removeView(controls)
+        val dark = android.view.View(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            contentDescription = "Restore relay controls"
+            setOnClickListener {
+                content.removeView(this)
+                content.addView(controls)
+                window.attributes = window.attributes.apply { screenBrightness = previousBrightness }
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                insets.show(bars)
+            }
+        }
+        content.addView(dark, android.view.ViewGroup.LayoutParams(-1, -1))
+        window.attributes = window.attributes.apply { screenBrightness = 0f }
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        insets.hide(bars)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
