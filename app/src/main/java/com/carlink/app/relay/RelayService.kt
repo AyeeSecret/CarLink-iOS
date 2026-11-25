@@ -149,8 +149,10 @@ class RelayService : Service() {
         val height = HeadUnitScreenConfig.getNegotiatedHeight()
         if (width < 1 || height < 1) return
         fun send(action: Int, index: Int) {
-            connection.send(TouchEvent(SystemClock.elapsedRealtime(), action, 0,
-                listOf(Triple(0, (points[index] * (width - 1)).toInt(), (points[index + 1] * (height - 1)).toInt())))
+            val x = (points[index] * (width - 1)).toInt()
+            val y = (points[index + 1] * (height - 1)).toInt()
+            val event = TouchEvent(SystemClock.elapsedRealtime(), action, 0, listOf(Triple(0, x, y)))
+            connection.send(event)
         }
         send(TOUCH_DOWN, 0)
         if (points[0] != points[2] || points[1] != points[3]) send(TOUCH_MOVE, 2)
