@@ -9,7 +9,6 @@ import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
 import com.andrerinas.openheadunit.utils.HeadUnitScreenConfig
-import kotlin.math.roundToInt
 import android.view.Surface
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -65,8 +64,8 @@ internal class RelayVideoTexture(
             output = Surface(source)
             val program = GLES20.glCreateProgram()
             GLES20.glAttachShader(program, shader(GLES20.GL_VERTEX_SHADER,
-                "attribute vec2 pos; attribute vec2 uv; uniform mat4 transform; varying vec2 coords;" +
-                    "void main(){ gl_Position=vec4(pos,0.0,1.0); coords=(transform*vec4(uv,0.0,1.0)).xy; }"))
+                "attribute vec2 pos; attribute vec2 uv; uniform mat4 transform; uniform vec2 viewport; varying vec2 coords;" +
+                    "void main(){ gl_Position=vec4(pos,0.0,1.0); coords=(transform*vec4((uv-0.5)*viewport+0.5,0.0,1.0)).xy; }"))
             GLES20.glAttachShader(program, shader(GLES20.GL_FRAGMENT_SHADER,
                 "#extension GL_OES_EGL_image_external : require\nprecision mediump float;" +
                     "uniform samplerExternalOES video; varying vec2 coords;" +
@@ -80,6 +79,7 @@ internal class RelayVideoTexture(
             attribute(program, "uv", floatArrayOf(0f,1f, 1f,1f, 0f,0f, 1f,0f))
             val matrix = FloatArray(16)
             val transform = GLES20.glGetUniformLocation(program, "transform")
+            val viewport = GLES20.glGetUniformLocation(program, "viewport")
             val pixels = ByteBuffer.allocateDirect(width * height * 4)
             var lastFrame = 0L
             source.setOnFrameAvailableListener({
@@ -90,6 +90,11 @@ internal class RelayVideoTexture(
                         lastFrame = now
                         source.getTransformMatrix(matrix)
                         GLES20.glUniformMatrix4fv(transform, 1, false, matrix, 0)
+                        val videoWidth = HeadUnitScreenConfig.getNegotiatedWidth().coerceAtLeast(1)
+                        val videoHeight = HeadUnitScreenConfig.getNegotiatedHeight().coerceAtLeast(1)
+                        val visibleWidth = (1f - HeadUnitScreenConfig.getWidthMargin().toFloat() / videoWidth).coerceIn(0.01f, 1f)
+                        val visibleHeight = (1f - HeadUnitScreenConfig.getHeightMargin().toFloat() / videoHeight).coerceIn(0.01f, 1f)
+                        GLES20.glUniform2f(viewport, visibleWidth, visibleHeight)
                         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
                         pixels.rewind()
                         GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels)
@@ -98,13 +103,8 @@ internal class RelayVideoTexture(
                         try {
                             val jpeg = ByteArrayOutputStream()
                             bitmap.copyPixelsFromBuffer(pixels)
-                            val visible = cropMargins(bitmap)
-                            try {
-                                if (visible.compress(Bitmap.CompressFormat.JPEG, 78, jpeg)) {
-                                    onFrame(jpeg.toByteArray())
-                                }
-                            } finally {
-                                if (visible !== bitmap) visible.recycle()
+                            if (bitmap.compress(Bitmap.CompressFormat.JPEG, 78, jpeg)) {
+                                onFrame(jpeg.toByteArray())
                             }
                         } finally {
                             bitmap.recycle()
@@ -118,19 +118,6 @@ internal class RelayVideoTexture(
             close()
             throw error
         }
-    }
-
-    private fun cropMargins(bitmap: Bitmap): Bitmap {
-        val videoWidth = HeadUnitScreenConfig.getNegotiatedWidth()
-        val videoHeight = HeadUnitScreenConfig.getNegotiatedHeight()
-        if (videoWidth <= 0 || videoHeight <= 0) return bitmap
-        val contentWidth = (width * (1.0 - HeadUnitScreenConfig.getWidthMargin().toDouble() / videoWidth))
-            .roundToInt().coerceIn(1, width)
-        val contentHeight = (height * (1.0 - HeadUnitScreenConfig.getHeightMargin().toDouble() / videoHeight))
-            .roundToInt().coerceIn(1, height)
-        if (contentWidth == width && contentHeight == height) return bitmap
-        return Bitmap.createBitmap(bitmap, (width - contentWidth) / 2, (height - contentHeight) / 2,
-            contentWidth, contentHeight)
     }
 
     private fun shader(type: Int, source: String): Int {
