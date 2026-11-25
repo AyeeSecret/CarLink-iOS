@@ -23,7 +23,7 @@ import java.net.ServerSocket
 import java.util.concurrent.ArrayBlockingQueue
 
 class RelayService : Service() {
-    private companion object {
+    companion object {
         // Android Auto input protocol actions, from Input.TouchEvent.PointerAction.
         const val START = "com.carlink.relay.START"
         const val APPROVE = "com.carlink.relay.APPROVE"
@@ -123,7 +123,7 @@ class RelayService : Service() {
                 }
 
                 override fun onFailed(reason: Int) {
-                    hotspotStatus = "Offline Wi-Fi could not start ($reason). Turn off Mobile Hotspot, or join the same Wi-Fi network on both devices."
+                    hotspotStatus = "Offline Wi-Fi could not start ($reason). Turn off Mobile Hotspot and restart the relay."
                     report()
                 }
 
