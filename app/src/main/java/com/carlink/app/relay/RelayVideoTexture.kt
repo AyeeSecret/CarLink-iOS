@@ -8,6 +8,8 @@ import android.opengl.GLES20
 import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
+import com.andrerinas.openheadunit.utils.HeadUnitScreenConfig
+import kotlin.math.roundToInt
 import android.view.Surface
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -96,8 +98,13 @@ internal class RelayVideoTexture(
                         try {
                             val jpeg = ByteArrayOutputStream()
                             bitmap.copyPixelsFromBuffer(pixels)
-                            if (bitmap.compress(Bitmap.CompressFormat.JPEG, 78, jpeg)) {
-                                onFrame(jpeg.toByteArray())
+                            val visible = cropMargins(bitmap)
+                            try {
+                                if (visible.compress(Bitmap.CompressFormat.JPEG, 78, jpeg)) {
+                                    onFrame(jpeg.toByteArray())
+                                }
+                            } finally {
+                                if (visible !== bitmap) visible.recycle()
                             }
                         } finally {
                             bitmap.recycle()
@@ -111,6 +118,19 @@ internal class RelayVideoTexture(
             close()
             throw error
         }
+    }
+
+    private fun cropMargins(bitmap: Bitmap): Bitmap {
+        val videoWidth = HeadUnitScreenConfig.getNegotiatedWidth()
+        val videoHeight = HeadUnitScreenConfig.getNegotiatedHeight()
+        if (videoWidth <= 0 || videoHeight <= 0) return bitmap
+        val contentWidth = (width * (1.0 - HeadUnitScreenConfig.getWidthMargin().toDouble() / videoWidth))
+            .roundToInt().coerceIn(1, width)
+        val contentHeight = (height * (1.0 - HeadUnitScreenConfig.getHeightMargin().toDouble() / videoHeight))
+            .roundToInt().coerceIn(1, height)
+        if (contentWidth == width && contentHeight == height) return bitmap
+        return Bitmap.createBitmap(bitmap, (width - contentWidth) / 2, (height - contentHeight) / 2,
+            contentWidth, contentHeight)
     }
 
     private fun shader(type: Int, source: String): Int {

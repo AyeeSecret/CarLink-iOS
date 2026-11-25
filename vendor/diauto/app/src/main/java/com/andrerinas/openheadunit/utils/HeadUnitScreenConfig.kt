@@ -585,13 +585,26 @@ object HeadUnitScreenConfig {
         !forcedScale && currentSettings.viewMode != Settings.ViewMode.SURFACE // the turn scales the view
         // stretch to fill does not matter: the region has the screen's own shape
 
+    // The headless relay renders the centered region of the negotiated codec frame.
+    private fun headlessContentSize(): Pair<Int, Int>? {
+        val target = com.andrerinas.openheadunit.HostIntegration.headlessMetrics ?: return null
+        val width = getNegotiatedWidth()
+        val height = getNegotiatedHeight()
+        if (width <= 0 || height <= 0 || target.widthPixels <= 0 || target.heightPixels <= 0) return null
+        val scale = minOf(width.toDouble() / target.widthPixels, height.toDouble() / target.heightPixels)
+        return (target.widthPixels * scale).roundToInt().coerceIn(1, width) to
+            (target.heightPixels * scale).roundToInt().coerceIn(1, height)
+    }
+
     fun getHeightMargin(): Int {
+        headlessContentSize()?.let { return getNegotiatedHeight() - it.second }
         if (turning() && turnRegionH > 0) return getNegotiatedHeight() - turnRegionH // CarLink
         val margin = ((getAdjustedHeight() - screenHeightPx) / scaleFactor).roundToInt()
         return margin.coerceAtLeast(0)
     }
 
     fun getWidthMargin(): Int {
+        headlessContentSize()?.let { return getNegotiatedWidth() - it.first }
         if (turning() && turnRegionW > 0) return getNegotiatedWidth() - turnRegionW // CarLink
         val margin = ((getAdjustedWidth() - screenWidthPx) / scaleFactor).roundToInt()
         return margin.coerceAtLeast(0)

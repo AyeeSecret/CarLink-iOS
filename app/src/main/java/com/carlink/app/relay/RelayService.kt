@@ -107,8 +107,9 @@ class RelayService : Service() {
     private fun sendTouch(points: List<Float>) {
         val connection = App.provide(this).commManager
         if (connection.connectionState.value !is CommManager.ConnectionState.TransportStarted) return
-        val width = HeadUnitScreenConfig.getNegotiatedWidth()
-        val height = HeadUnitScreenConfig.getNegotiatedHeight()
+        // Android Auto's touch origin is the top-left of the active region, after video margins.
+        val width = HeadUnitScreenConfig.getNegotiatedWidth() - HeadUnitScreenConfig.getWidthMargin()
+        val height = HeadUnitScreenConfig.getNegotiatedHeight() - HeadUnitScreenConfig.getHeightMargin()
         if (width < 1 || height < 1) return
         fun send(action: Int, index: Int) {
             val x = (points[index] * (width - 1)).toInt()

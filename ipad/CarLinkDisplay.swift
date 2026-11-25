@@ -76,6 +76,7 @@ private struct RelayView: View {
                     }
                     .position(x: viewport.size.width / 2, y: viewport.size.height / 2)
                 }
+                .ignoresSafeArea()
             }
             if showControls {
                 VStack(spacing: 16) {
@@ -106,6 +107,10 @@ private struct RelayView: View {
                 }.accessibilityLabel("Connection settings")
             }
         }
+        .onChange(of: frame != nil, initial: true) { _, displaying in
+            UIApplication.shared.isIdleTimerDisabled = displaying
+        }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .task(id: endpoint) {
             if let endpoint { await receive(from: endpoint) }
         }
@@ -220,8 +225,11 @@ private struct RelayView: View {
                         status = ""
                     }
                 case 204:
+                    frame = nil
+                    showControls = true
                     status = "Relay connected. Plug your Android Auto phone into the S22."
                 case 404:
+                    frame = nil
                     endpoint = nil
                     status = "Check the relay code on the S22."
                     return
