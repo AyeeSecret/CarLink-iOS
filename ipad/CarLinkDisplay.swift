@@ -197,7 +197,7 @@ private struct RelayView: View {
                         status = ""
                     }
                 case 204:
-                    status = "Display ready. Waiting for the projection engine to draw its first frame…"
+                    status = "Relay connected. Open Android Auto on the S22 to start the picture."
                 case 404:
                     endpoint = nil
                     status = "Check the relay code on the S22."

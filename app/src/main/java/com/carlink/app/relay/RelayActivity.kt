@@ -73,7 +73,7 @@ class RelayActivity : Activity() {
 
     private fun showInstructions() {
         instructions.text = "Join this phone's hotspot on the iPad and enter this code in CarLink Display. " +
-            "Approve capture for audio, connect the iPad, then open CarLink. " +
+            "Rotate the S22 to landscape, select Share entire screen, connect the iPad, then open CarLink. " +
             "Stop the relay when done. Screen images travel unencrypted over your hotspot.\n\nCode: $token"
     }
 

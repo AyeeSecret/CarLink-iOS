@@ -148,13 +148,15 @@ object ProjectionVisibility {
             override fun onReceive(context: Context, intent: Intent) {
                 val activity = current ?: return
                 val view = activity.window.decorView
-                if (view.display?.name != "CarLink Relay") return
+                @Suppress("DEPRECATION")
+                val metrics = android.util.DisplayMetrics().also { activity.windowManager.defaultDisplay.getRealMetrics(it) }
+                val offset = IntArray(2).also(view::getLocationOnScreen)
                 val points = intent.getFloatArrayExtra("points") ?: return
                 if (points.size != 4 || points.any { !it.isFinite() || it !in 0f..1f }) return
                 val start = android.os.SystemClock.uptimeMillis()
                 fun dispatch(action: Int, index: Int) {
                     val event = android.view.MotionEvent.obtain(start, android.os.SystemClock.uptimeMillis(),
-                        action, points[index] * (view.width - 1), points[index + 1] * (view.height - 1), 0)
+                        action, points[index] * (metrics.widthPixels - 1) - offset[0], points[index + 1] * (metrics.heightPixels - 1) - offset[1], 0)
                     event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
                     try { activity.dispatchTouchEvent(event) } finally { event.recycle() }
                 }

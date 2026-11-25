@@ -107,7 +107,13 @@ class RelayService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun createDisplay(width: Int, height: Int, dpi: Int) {
+    @Suppress("DEPRECATION")
+    private fun createDisplay() {
+            val metrics = android.util.DisplayMetrics()
+            getSystemService(android.view.WindowManager::class.java).defaultDisplay.getRealMetrics(metrics)
+            val ratio = minOf(1.0, 1280.0 / maxOf(metrics.widthPixels, metrics.heightPixels))
+            val width = (metrics.widthPixels * ratio).toInt()
+            val height = (metrics.heightPixels * ratio).toInt()
             if (display != null) return
             val thread = HandlerThread("CarLink capture").also { it.start() }
             worker = thread
@@ -137,9 +143,9 @@ class RelayService : Service() {
                     }
                 }
             }, Handler(thread.looper))
-            display = getSystemService(DisplayManager::class.java).createVirtualDisplay(
-                "CarLink Relay", width, height, dpi, images.surface,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION)
+            display = checkNotNull(projection).createVirtualDisplay(
+                "CarLink Screen Capture", width, height, metrics.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, images.surface, null, null)
     }
 
     private fun serve(server: ServerSocket, token: String) {
@@ -161,7 +167,7 @@ class RelayService : Service() {
                                 if (size.size == 3 && size[0] in 320..4096 && size[1] in 240..3072 &&
                                     size[0].toLong() * size[1] <= 6_000_000 && size[2] in 120..480) {
                                     val setup = java.util.concurrent.FutureTask<Boolean> {
-                                        if (!server.isClosed) createDisplay(size[0], size[1], size[2])
+                                        if (!server.isClosed) createDisplay()
                                         display?.display?.isValid == true
                                     }
                                     Handler(Looper.getMainLooper()).post(setup)
@@ -192,7 +198,7 @@ class RelayService : Service() {
                             }
                             val authorized = request.lineSequence().first() in
                                 listOf("GET /frame/$token HTTP/1.1", "GET /frame/$token HTTP/1.0")
-                            val bytes = if (authorized) latest else null
+                            val bytes = if (authorized && com.carlink.app.switcher.ProjectionVisibility.front.value.projections.isNotEmpty()) latest else null
                             val status = when {
                                 !authorized -> "404 Not Found"
                                 bytes == null -> "204 No Content"
