@@ -431,6 +431,12 @@ internal class AapAudio(
             length = AUDIO_BUFS_SIZE
         }
 
+        val relay = com.andrerinas.openheadunit.HostIntegration.headlessMediaPcm
+        if (channel == Channel.ID_AUD && relay != null) {
+            relay(buf, start, length)
+            return
+        }
+
         if (audioDecoder.getTrack(channel) == null) {
             startAudioTrack(channel)
         }

@@ -21,7 +21,8 @@
          APK with PackageInstaller. Both are also declared by the engines; listed here for CarLink. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -76,7 +77,7 @@
             </intent-filter>
         </activity>
         <service android:name=".relay.RelayService" android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="connectedDevice" android:process=":aa" />
 
         <!-- Lets Macrobenchmark and Perfetto trace the release build from adb (no debugging, no
              data access); Android's recommended setting for measuring release builds. -->

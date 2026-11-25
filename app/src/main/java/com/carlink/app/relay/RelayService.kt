@@ -1,170 +1,155 @@
 package com.carlink.app.relay
 
-import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.PixelFormat
-import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
+import android.media.Image
 import android.media.ImageReader
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
+import android.util.DisplayMetrics
 import android.util.Log
+import com.andrerinas.openheadunit.App
+import com.andrerinas.openheadunit.HostIntegration
+import com.andrerinas.openheadunit.aap.protocol.messages.TouchEvent
+import com.andrerinas.openheadunit.aap.protocol.proto.Input.TouchEvent.PointerAction
+import com.andrerinas.openheadunit.connection.CommManager
+import com.andrerinas.openheadunit.utils.HeadUnitScreenConfig
 import java.io.ByteArrayOutputStream
 import java.net.ServerSocket
+import java.util.concurrent.ArrayBlockingQueue
 
 class RelayService : Service() {
-    companion object {
-        @Volatile var activeCode: String? = null
-            private set
-    }
-    private var projection: MediaProjection? = null
-    private var display: VirtualDisplay? = null
-    @Volatile private var reader: ImageReader? = null
-    private var worker: HandlerThread? = null
+    private val audio = ArrayBlockingQueue<ByteArray>(8)
     private var server: ServerSocket? = null
+    private var worker: HandlerThread? = null
+    private var reader: ImageReader? = null
+    private var lastFrameAt = 0L
     @Volatile private var latest: ByteArray? = null
-    private val audio = java.util.concurrent.ArrayBlockingQueue<ByteArray>(4)
-    @Volatile private var capturingAudio = false
-
-    @android.annotation.TargetApi(29)
-    @android.annotation.SuppressLint("MissingPermission")
-    private fun startAudio(media: MediaProjection) {
-        val config = android.media.AudioPlaybackCaptureConfiguration.Builder(media)
-            .addMatchingUid(applicationInfo.uid).build()
-        val format = android.media.AudioFormat.Builder()
-            .setSampleRate(48000).setChannelMask(android.media.AudioFormat.CHANNEL_IN_MONO)
-            .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).build()
-        val recorder = android.media.AudioRecord.Builder().setAudioFormat(format)
-            .setAudioPlaybackCaptureConfig(config).build()
-        capturingAudio = true
-        Thread({
-            try {
-                recorder.startRecording()
-                while (capturingAudio) {
-                    val chunk = ByteArray(7680)
-                    val count = recorder.read(chunk, 0, chunk.size)
-                    if (count <= 0) break
-                    val packet = if (count == chunk.size) chunk else chunk.copyOf(count)
-                    if (!audio.offer(packet)) {
-                        audio.poll()
-                        audio.offer(packet)
-                    }
-                }
-            } catch (ex: RuntimeException) {
-                Log.w("CarLinkRelay", "Playback capture stopped", ex)
-            } finally {
-                recorder.release()
-            }
-        }, "CarLink audio capture").start()
-    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    @Suppress("DEPRECATION")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (projection != null) return START_NOT_STICKY
-        val capture = intent?.getParcelableExtra<Intent>("capture")
+        if (server != null) return START_NOT_STICKY
         val token = intent?.getStringExtra("token")
-        if (capture == null || token == null) {
+        if (token == null) {
             stopSelf()
             return START_NOT_STICKY
         }
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel("relay", "CarLink Relay", NotificationManager.IMPORTANCE_LOW))
+        val notifications = getSystemService(NotificationManager::class.java)
+        notifications.createNotificationChannel(NotificationChannel("relay", "CarLink Relay", NotificationManager.IMPORTANCE_LOW))
         startForeground(8765, Notification.Builder(this, "relay")
+            .setContentTitle("CarLink Android Auto relay")
             .setSmallIcon(android.R.drawable.ic_menu_slideshow)
-            .setContentTitle("CarLink is sharing the screen")
-            .setOngoing(true)
             .build())
         try {
             val socket = ServerSocket(8765)
             server = socket
-            activeCode = token
-            val media = getSystemService(MediaProjectionManager::class.java)
-                .getMediaProjection(Activity.RESULT_OK, capture) ?: error("Capture permission unavailable")
-            projection = media
-            if (android.os.Build.VERSION.SDK_INT >= 29 &&
-                checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                runCatching { startAudio(media) }.onFailure { Log.w("CarLinkRelay", "Playback capture unavailable", it) }
-            }
-            media.registerCallback(object : MediaProjection.Callback() {
-                override fun onStop() { stopSelf() }
-                override fun onCapturedContentResize(width: Int, height: Int) {
-                    if (display != null) configureCapture(width, height, resources.displayMetrics.densityDpi)
-                }
-            }, Handler(Looper.getMainLooper()))
             Thread({ serve(socket, token) }, "CarLink relay HTTP").start()
-        } catch (error: Exception) {
-            Log.e("CarLinkRelay", "Could not start relay", error)
+        } catch (error: java.io.IOException) {
+            Log.e("CarLinkRelay", "Could not start the headless relay", error)
             stopSelf()
         }
         return START_NOT_STICKY
     }
 
-    @Suppress("DEPRECATION")
-    private fun createDisplay() {
-            val metrics = android.util.DisplayMetrics()
-            getSystemService(android.view.WindowManager::class.java).defaultDisplay.getRealMetrics(metrics)
-            configureCapture(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+    private fun prepareDecoder(width: Int, height: Int, dpi: Int) {
+        if (reader != null) return
+        val thread = HandlerThread("CarLink offscreen decoder").apply { start() }
+        worker = thread
+        // Android Auto negotiates a supported codec mode with a viewport derived from the iPad.
+        // Keep the offscreen buffer at the same aspect ratio with even chroma dimensions.
+        val scale = minOf(1.0, 1280.0 / maxOf(width, height))
+        val captureWidth = (width * scale / 2).toInt() * 2
+        val captureHeight = (height * scale / 2).toInt() * 2
+        val images = ImageReader.newInstance(captureWidth, captureHeight, ImageFormat.YUV_420_888, 3)
+        reader = images
+        images.setOnImageAvailableListener({ source ->
+            source.acquireLatestImage()?.use { image ->
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastFrameAt >= 40) {
+                    lastFrameAt = now
+                    latest = encodeFrame(image)
+                }
+            }
+        }, Handler(thread.looper))
+        HostIntegration.headlessMetrics = DisplayMetrics().apply {
+            widthPixels = width
+            heightPixels = height
+            densityDpi = dpi
+            density = dpi / 160f
+        }
+        HostIntegration.headlessMediaPcm = ::receiveMediaAudio
+        HostIntegration.headlessSurface = images.surface
     }
 
-    private fun configureCapture(sourceWidth: Int, sourceHeight: Int, density: Int) {
-            if (sourceWidth <= 0 || sourceHeight <= 0) return
-            val ratio = minOf(1.0, 1280.0 / maxOf(sourceWidth, sourceHeight))
-            val width = (sourceWidth * ratio).toInt()
-            val height = (sourceHeight * ratio).toInt()
-            if (display != null) return
-            if (reader?.width == width && reader?.height == height) return
-            val thread = worker ?: HandlerThread("CarLink capture").also { it.start() }
-            val previousReader = reader
-            latest = null
-            worker = thread
-            val images = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-            reader = images
-            var lastFrame = 0L
-            images.setOnImageAvailableListener({ source ->
-                source.acquireLatestImage()?.use { image ->
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    if (now - lastFrame < 100) return@use
-                    lastFrame = now
-                    val plane = image.planes[0]
-                    val padded = Bitmap.createBitmap(plane.rowStride / plane.pixelStride, height, Bitmap.Config.ARGB_8888)
-                    try {
-                        padded.copyPixelsFromBuffer(plane.buffer)
-                        val frame = Bitmap.createBitmap(padded, 0, 0, width, height)
-                        try {
-                            if (reader === source) latest = ByteArrayOutputStream().use {
-                                frame.compress(Bitmap.CompressFormat.JPEG, 75, it)
-                                it.toByteArray()
-                            }
-                        } finally {
-                            if (frame !== padded) frame.recycle()
-                        }
-                    } finally {
-                        padded.recycle()
-                    }
+    private fun encodeFrame(image: Image): ByteArray {
+        val width = image.width
+        val height = image.height
+        val nv21 = ByteArray(width * height * 3 / 2)
+        for (index in 0..2) {
+            val plane = image.planes[index]
+            val chroma = index != 0
+            val rows = if (chroma) height / 2 else height
+            val columns = if (chroma) width / 2 else width
+            val base = plane.buffer.position()
+            val destination = if (chroma) width * height + (2 - index) else 0
+            val step = if (chroma) 2 else 1
+            for (row in 0 until rows) {
+                val start = base + row * plane.rowStride
+                for (column in 0 until columns) {
+                    nv21[destination + (row * columns + column) * step] =
+                        plane.buffer.get(start + column * plane.pixelStride)
                 }
-            }, Handler(thread.looper))
-            val current = display
-            if (current == null) {
-                display = checkNotNull(projection).createVirtualDisplay(
-                    "CarLink Screen Capture", width, height, density,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, images.surface, null, null)
-            } else {
-                current.surface = null
-                current.resize(width, height, density)
-                current.surface = images.surface
-                Handler(thread.looper).post { previousReader?.close() }
             }
+        }
+        return ByteArrayOutputStream().use { output ->
+            YuvImage(nv21, ImageFormat.NV21, width, height, null)
+                .compressToJpeg(Rect(0, 0, width, height), 78, output)
+            output.toByteArray()
+        }
+    }
+
+    private fun receiveMediaAudio(source: ByteArray, offset: Int, length: Int) {
+        // The media channel is signed 48 kHz stereo PCM. The iPad client accepts mono.
+        val frames = length / 4
+        if (frames <= 0) return
+        val packet = ByteArray(frames * 2)
+        for (frame in 0 until frames) {
+            val sample = offset + frame * 4
+            val left = (source[sample].toInt() and 255) or (source[sample + 1].toInt() shl 8)
+            val right = (source[sample + 2].toInt() and 255) or (source[sample + 3].toInt() shl 8)
+            val mono = (left + right) / 2
+            packet[frame * 2] = mono.toByte()
+            packet[frame * 2 + 1] = (mono shr 8).toByte()
+        }
+        if (!audio.offer(packet)) {
+            audio.poll()
+            audio.offer(packet)
+        }
+    }
+
+    private fun sendTouch(points: List<Float>) {
+        val connection = App.provide(this).commManager
+        if (connection.connectionState.value !is CommManager.ConnectionState.TransportStarted) return
+        val width = HeadUnitScreenConfig.getNegotiatedWidth()
+        val height = HeadUnitScreenConfig.getNegotiatedHeight()
+        if (width < 1 || height < 1) return
+        fun send(action: PointerAction, index: Int) {
+            connection.send(TouchEvent(SystemClock.elapsedRealtime(), action,
+                (points[index] * (width - 1)).toInt(), (points[index + 1] * (height - 1)).toInt()))
+        }
+        send(PointerAction.TOUCH_ACTION_DOWN, 0)
+        if (points[0] != points[2] || points[1] != points[3]) send(PointerAction.TOUCH_ACTION_MOVE, 2)
+        send(PointerAction.TOUCH_ACTION_UP, 2)
     }
 
     private fun serve(server: ServerSocket, token: String) {
@@ -186,8 +171,8 @@ class RelayService : Service() {
                                 if (size.size == 3 && size[0] in 320..4096 && size[1] in 240..3072 &&
                                     size[0].toLong() * size[1] <= 6_000_000 && size[2] in 120..480) {
                                     val setup = java.util.concurrent.FutureTask<Boolean> {
-                                        if (!server.isClosed) createDisplay()
-                                        display?.display?.isValid == true
+                                        if (!server.isClosed) prepareDecoder(size[0], size[1], size[2])
+                                        reader?.surface?.isValid == true
                                     }
                                     Handler(Looper.getMainLooper()).post(setup)
                                     val ready = runCatching { setup.get(4, java.util.concurrent.TimeUnit.SECONDS) }
@@ -209,15 +194,14 @@ class RelayService : Service() {
                                 val points = path[1].substringAfter("/touch/$token/").split(',')
                                     .mapNotNull { it.toFloatOrNull() }
                                 if (points.size == 4 && points.all { it.isFinite() && it in 0f..1f }) {
-                                    sendBroadcast(Intent(com.carlink.app.switcher.ProjectionVisibility.RELAY_TOUCH)
-                                        .setPackage(packageName).putExtra("points", points.toFloatArray()))
+                                    sendTouch(points)
                                     client.getOutputStream().write("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".toByteArray())
                                     return@use
                                 }
                             }
                             val authorized = request.lineSequence().first() in
                                 listOf("GET /frame/$token HTTP/1.1", "GET /frame/$token HTTP/1.0")
-                            val bytes = if (authorized && com.carlink.app.switcher.ProjectionVisibility.front.value.projections.isNotEmpty()) latest else null
+                            val bytes = if (authorized) latest else null
                             val status = when {
                                 !authorized -> "404 Not Found"
                                 bytes == null -> "204 No Content"
@@ -239,17 +223,16 @@ class RelayService : Service() {
     }
 
     override fun onDestroy() {
-        activeCode = null
-        capturingAudio = false
         server?.close()
-        display?.release()
-        reader?.setOnImageAvailableListener(null, null)
+        HostIntegration.headlessSurface = null
+        HostIntegration.headlessMetrics = null
+        HostIntegration.headlessMediaPcm = null
+        if (reader != null) App.provide(this).videoDecoder.setSurface(null)
         val images = reader
-        worker?.let {
-            Handler(it.looper).post { images?.close() }
-            it.quitSafely()
+        worker?.let { thread ->
+            Handler(thread.looper).post { images?.close() }
+            thread.quitSafely()
         }
-        projection?.stop()
         super.onDestroy()
     }
 }

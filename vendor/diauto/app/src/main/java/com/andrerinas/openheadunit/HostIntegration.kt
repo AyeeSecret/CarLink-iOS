@@ -11,6 +11,11 @@ import com.andrerinas.openheadunit.main.MainActivity
  * and media session carry, and what happens to its toasts. Standalone DiAuto keeps its defaults.
  */
 object HostIntegration {
+    // CarLink can provide an offscreen decoder target and media sink for a paired iPad.
+    @Volatile var headlessSurface: android.view.Surface? = null
+    @Volatile var headlessMetrics: android.util.DisplayMetrics? = null
+    @Volatile var headlessMediaPcm: ((ByteArray, Int, Int) -> Unit)? = null
+
     // CarLink selects the iPad display when launching the projection task.
     @Volatile var projectionLaunchOptions: ((Context) -> android.os.Bundle?)? = null
     @Volatile

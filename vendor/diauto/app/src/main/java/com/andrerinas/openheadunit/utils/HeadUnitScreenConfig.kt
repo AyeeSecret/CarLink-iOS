@@ -61,7 +61,9 @@ object HeadUnitScreenConfig {
 
 
     @Synchronized
-    fun init(context: Context, displayMetrics: DisplayMetrics, settings: Settings) {
+    fun init(context: Context, deviceMetrics: DisplayMetrics, settings: Settings) {
+        val target = com.andrerinas.openheadunit.HostIntegration.headlessMetrics
+        val displayMetrics = target ?: deviceMetrics
         stretchToFill = settings.stretchToFill
         forcedScale = settings.forcedScale && settings.viewMode == Settings.ViewMode.SURFACE
 
@@ -70,7 +72,12 @@ object HeadUnitScreenConfig {
         val usableW: Int
         val usableH: Int
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) { // API 30+
+        if (target != null) {
+            realW = target.widthPixels
+            realH = target.heightPixels
+            usableW = realW
+            usableH = realH
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) { // API 30+
             val windowManager = context.getSystemService(android.view.WindowManager::class.java)
             val bounds = windowManager.currentWindowMetrics.bounds
             // On API 30+, bounds on an Activity context often return the usable area.

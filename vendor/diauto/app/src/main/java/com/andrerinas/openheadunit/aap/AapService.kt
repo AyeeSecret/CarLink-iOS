@@ -858,6 +858,7 @@ class AapService : Service(), UsbReceiver.Listener {
             commManager.connectionState.collect { state ->
                 when (state) {
                     is CommManager.ConnectionState.Connected -> {
+                        HostIntegration.headlessSurface?.let { App.provide(this@AapService).videoDecoder.setSurface(it) }
                         onConnected()
                         // CarLink: open the projection while the handshake runs, so its surface is
                         // ready when the phone sets up video (~170 ms on the S25); HandshakeComplete
@@ -865,7 +866,8 @@ class AapService : Service(), UsbReceiver.Listener {
                         launchAapProjectionActivity()
                     }
                     is CommManager.ConnectionState.HandshakeComplete -> {
-                        launchAapProjectionActivity()
+                        if (HostIntegration.headlessSurface != null) commManager.startReading()
+                        else launchAapProjectionActivity()
                     }
                     is CommManager.ConnectionState.TransportStarted -> {
                         hasEverConnected = true
@@ -1051,6 +1053,7 @@ class AapService : Service(), UsbReceiver.Listener {
     }
 
     private fun launchAapProjectionActivity() {
+        if (HostIntegration.headlessSurface != null) return
         if (App.isPiPActive) {
             AppLog.i("AapService: Skipping projection launch because PiP is active")
             return

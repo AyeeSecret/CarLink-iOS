@@ -156,7 +156,7 @@ private struct RelayView: View {
                 let (data, response) = try await URLSession.shared.data(from: url)
                 guard let http = response as? HTTPURLResponse, http.statusCode != 404 else { return }
                 let count = data.count / 2
-                guard http.statusCode == 200, count > 0, count <= 3840,
+                guard http.statusCode == 200, count > 0, count <= 65536,
                       let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: UInt32(count)),
                       let samples = buffer.floatChannelData?[0] else {
                     if queued == 0 && player.isPlaying { player.stop() }
@@ -220,7 +220,7 @@ private struct RelayView: View {
                         status = ""
                     }
                 case 204:
-                    status = "Relay connected. Open Android Auto on the S22 to start the picture."
+                    status = "Relay connected. Plug your Android Auto phone into the S22."
                 case 404:
                     endpoint = nil
                     status = "Check the relay code on the S22."
@@ -235,7 +235,7 @@ private struct RelayView: View {
                 showControls = true
                 status = "Relay unavailable. Check the hotspot and screen sharing."
             }
-            try? await Task.sleep(for: .milliseconds(100))
+            try? await Task.sleep(for: .milliseconds(35))
         }
     }
 }
