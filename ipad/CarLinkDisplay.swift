@@ -31,7 +31,8 @@ struct CarLinkDisplay: App {
 
 private struct RelayView: View {
     @StateObject private var route = HotspotRoute()
-    @State private var code = ""
+    @State private var pairingID = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    @State private var searching = false
     @State private var endpoint: URL?
     @State private var frame: UIImage?
     @State private var status = ""
@@ -82,11 +83,11 @@ private struct RelayView: View {
                 VStack(spacing: 16) {
                     Text("CarLink Display").font(.title)
                     if endpoint == nil {
-                        SecureField("Relay code", text: $code)
-                            .keyboardType(.numberPad)
-                        Button("Connect", action: connect)
+                        Button(searching ? "Searching…" : "Find relay") { searching = true }
+                            .disabled(searching)
                     } else {
                         Button("Disconnect") {
+                            searching = false
                             endpoint = nil
                             frame = nil
                             status = ""
@@ -107,6 +108,10 @@ private struct RelayView: View {
                 }.accessibilityLabel("Connection settings")
             }
         }
+        .statusBarHidden(frame != nil)
+        .task(id: searching) {
+            if searching { await findRelay() }
+        }
         .onChange(of: frame != nil, initial: true) { _, displaying in
             UIApplication.shared.isIdleTimerDisabled = displaying
         }
@@ -119,18 +124,37 @@ private struct RelayView: View {
         }
     }
 
-    private func connect() {
-        guard let address = route.router else {
-            status = "Join the S22 hotspot and try again."
-            return
+    @MainActor
+    private func findRelay() async {
+        status = "Looking for an open relay on Wi-Fi…"
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 2
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+
+        for _ in 0..<65 {
+            if Task.isCancelled { return }
+            if let gateway = route.router, let base = URL(string: "http://\(gateway):8765") {
+                var request = URLRequest(url: base.appendingPathComponent("pair").appendingPathComponent(pairingID))
+                request.httpMethod = "POST"
+                if let (_, response) = try? await session.data(for: request),
+                   let http = response as? HTTPURLResponse {
+                    if http.statusCode == 204 {
+                        endpoint = base.appendingPathComponent("frame").appendingPathComponent(pairingID)
+                        status = "Connecting…"
+                        searching = false
+                        return
+                    }
+                    if http.statusCode == 202 { status = "Approve this iPad in CarLink Relay on the S22." }
+                    if http.statusCode == 409 { status = "This relay is busy. Restart the relay to pair again." }
+                }
+            }
+            try? await Task.sleep(for: .seconds(1))
         }
-        guard code.utf8.count == 4, code.utf8.allSatisfy({ (48...57).contains($0) }),
-              let url = URL(string: "http://\(address):8765/frame/\(code)") else {
-            status = "Enter the four-digit code shown on the S22."
-            return
+        if !Task.isCancelled {
+            status = "Join the S22 relay Wi-Fi and try again."
+            searching = false
         }
-        status = "Connecting…"
-        endpoint = url
     }
 
     @MainActor

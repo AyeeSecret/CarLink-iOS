@@ -7,15 +7,38 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.carlink.app.ui.HomeActivity
-import java.security.SecureRandom
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 
 class RelayActivity : Activity() {
     private lateinit var instructions: TextView
-    private var token: String = ""
+    private lateinit var approve: Button
+    private val updates = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            instructions.text = intent.getStringExtra("status")
+            approve.isEnabled = intent.getBooleanExtra("pending", false)
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ContextCompat.registerReceiver(this, updates, IntentFilter(RelayService.STATUS), ContextCompat.RECEIVER_NOT_EXPORTED)
+        if (android.os.Build.VERSION.SDK_INT >= 26 &&
+            getSystemService(android.app.ActivityManager::class.java).runningAppProcesses.orEmpty()
+                .any { it.processName == "${packageName}:aa" }) {
+            startService(Intent(this, RelayService::class.java).setAction(RelayService.QUERY))
+        }
+    }
+
+    override fun onStop() {
+        unregisterReceiver(updates)
+        super.onStop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        token = savedInstanceState?.getString("token") ?: newToken()
         instructions = TextView(this)
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -24,9 +47,20 @@ class RelayActivity : Activity() {
             addView(Button(context).apply {
                 text = "Start headless relay"
                 setOnClickListener {
-                    startForegroundService(Intent(context, RelayService::class.java).putExtra("token", token))
+                    if (android.os.Build.VERSION.SDK_INT < 26) return@setOnClickListener
+                    val permission = if (android.os.Build.VERSION.SDK_INT >= 33)
+                        android.Manifest.permission.NEARBY_WIFI_DEVICES else android.Manifest.permission.ACCESS_FINE_LOCATION
+                    if (checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        startRelay()
+                    } else requestPermissions(arrayOf(permission), 21)
                 }
             })
+            approve = Button(context).apply {
+                text = "Approve iPad"
+                isEnabled = false
+                setOnClickListener { startService(Intent(context, RelayService::class.java).setAction(RelayService.APPROVE)) }
+            }
+            addView(approve)
             addView(Button(context).apply {
                 text = "Open CarLink"
                 setOnClickListener { startActivity(Intent(context, HomeActivity::class.java)) }
@@ -39,7 +73,7 @@ class RelayActivity : Activity() {
                 text = "Stop relay"
                 setOnClickListener {
                     stopService(Intent(context, RelayService::class.java))
-                    token = newToken()
+                    approve.isEnabled = false
                     showInstructions()
                 }
             })
@@ -72,17 +106,16 @@ class RelayActivity : Activity() {
         insets.hide(bars)
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString("token", token)
-        super.onSaveInstanceState(outState)
+    private fun startRelay() {
+        startForegroundService(Intent(this, RelayService::class.java).setAction(RelayService.START))
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 21 && grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED) startRelay()
     }
 
     private fun showInstructions() {
-        instructions.text = "Join this phone's hotspot on the iPad and enter this code in CarLink Display. " +
-            "Connect the iPad before plugging in your Android Auto phone. " +
-            "Stop the relay when done. Screen images travel unencrypted over your hotspot.\n\nCode: $token"
+        instructions.text = "Start the relay to create an offline Wi-Fi network for the iPad."
     }
-
-    private fun newToken(): String =
-        (SecureRandom().nextInt(9_000) + 1_000).toString()
 }

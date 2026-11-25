@@ -8,6 +8,8 @@ import android.content.Intent
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
 import android.util.DisplayMetrics
@@ -23,10 +25,30 @@ import java.util.concurrent.ArrayBlockingQueue
 class RelayService : Service() {
     private companion object {
         // Android Auto input protocol actions, from Input.TouchEvent.PointerAction.
+        const val START = "com.carlink.relay.START"
+        const val APPROVE = "com.carlink.relay.APPROVE"
+        const val QUERY = "com.carlink.relay.QUERY"
+        const val STATUS = "com.carlink.relay.STATUS"
         const val TOUCH_DOWN = 0
         const val TOUCH_UP = 1
         const val TOUCH_MOVE = 2
     }
+    private var hotspot: WifiManager.LocalOnlyHotspotReservation? = null
+    private var hotspotStatus = "Creating offline Wi-Fi…"
+    private var pendingUntil = 0L
+    @Volatile private var pendingId: String? = null
+    @Volatile private var approvedId: String? = null
+
+    private fun report() {
+        val pending = pendingId != null && SystemClock.elapsedRealtime() < pendingUntil
+        val message = when {
+            pending -> "$hotspotStatus\n\nAn iPad is requesting access. Tap Approve iPad if you started the connection."
+            approvedId != null -> "$hotspotStatus\n\niPad approved. Plug in the Android Auto phone."
+            else -> hotspotStatus
+        }
+        sendBroadcast(Intent(STATUS).setPackage(packageName).putExtra("status", message).putExtra("pending", pending))
+    }
+
     private val audio = ArrayBlockingQueue<ByteArray>(8)
     private var server: ServerSocket? = null
     private var worker: HandlerThread? = null
@@ -36,11 +58,27 @@ class RelayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (server != null) return START_NOT_STICKY
-        val token = intent?.getStringExtra("token")
-        if (token == null) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            APPROVE -> {
+                if (approvedId == null && SystemClock.elapsedRealtime() < pendingUntil) {
+                    approvedId = pendingId
+                    pendingId = null
+                }
+                report()
+                return START_NOT_STICKY
+            }
+            QUERY -> {
+                if (server != null) report() else stopSelf()
+                return START_NOT_STICKY
+            }
+            START -> if (server != null) {
+                report()
+                return START_NOT_STICKY
+            }
+            else -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
         }
         val notifications = getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(NotificationChannel("relay", "CarLink Relay", NotificationManager.IMPORTANCE_LOW))
@@ -51,12 +89,55 @@ class RelayService : Service() {
         try {
             val socket = ServerSocket(8765)
             server = socket
-            Thread({ serve(socket, token) }, "CarLink relay HTTP").start()
+            Thread({ serve(socket) }, "CarLink relay HTTP").start()
+            startOfflineHotspot()
         } catch (error: java.io.IOException) {
             Log.e("CarLinkRelay", "Could not start the headless relay", error)
             stopSelf()
         }
         return START_NOT_STICKY
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun startOfflineHotspot() {
+        if (Build.VERSION.SDK_INT < 26) return
+        val wifi = applicationContext.getSystemService(WifiManager::class.java)
+        try {
+            wifi.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
+                @Suppress("DEPRECATION")
+                override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation) {
+                    if (server?.isClosed != false) {
+                        reservation.close()
+                        return
+                    }
+                    hotspot = reservation
+                    val (name, password) = if (Build.VERSION.SDK_INT >= 30) {
+                        val config = reservation.softApConfiguration
+                        config.ssid to config.passphrase
+                    } else {
+                        val config = reservation.wifiConfiguration
+                        config?.SSID to config?.preSharedKey
+                    }
+                    hotspotStatus = "Join this Wi-Fi network on the iPad.\nNetwork: $name\nPassword: ${password.orEmpty()}"
+                    report()
+                }
+
+                override fun onFailed(reason: Int) {
+                    hotspotStatus = "Offline Wi-Fi could not start ($reason). Turn off Mobile Hotspot, or join the same Wi-Fi network on both devices."
+                    report()
+                }
+
+                override fun onStopped() {
+                    hotspot = null
+                    hotspotStatus = "Offline Wi-Fi stopped. Restart the relay to create it again."
+                    report()
+                }
+            }, Handler(Looper.getMainLooper()))
+        } catch (exception: RuntimeException) {
+            Log.w("CarLinkRelay", "Offline hotspot unavailable", exception)
+            hotspotStatus = "Offline Wi-Fi unavailable. Check Nearby devices permission and restart the relay."
+        }
+        report()
     }
 
     private fun prepareDecoder(width: Int, height: Int, dpi: Int) {
@@ -122,7 +203,7 @@ class RelayService : Service() {
         send(TOUCH_UP, 2)
     }
 
-    private fun serve(server: ServerSocket, token: String) {
+    private fun serve(server: ServerSocket) {
         while (!server.isClosed) {
             try {
                 server.accept().use { client ->
@@ -136,6 +217,17 @@ class RelayService : Service() {
                         request.append(byte.toChar())
                         if (request.endsWith("\r\n\r\n")) {
                             val path = request.lineSequence().first().split(' ')
+                            if (path.size == 3 && path[0] == "POST" && path[1].startsWith("/pair/")) {
+                                val id = path[1].substringAfter("/pair/")
+                                val status = requestApproval(id)
+                                client.getOutputStream().write(("HTTP/1.1 $status\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").toByteArray())
+                                return@use
+                            }
+                            val token = approvedId ?: ""
+                            if (token.isEmpty()) {
+                                client.getOutputStream().write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                                return@use
+                            }
                             if (path.size == 3 && path[0] == "POST" && path[1].startsWith("/display/$token/")) {
                                 val size = path[1].substringAfter("/display/$token/").split(',').map { it.toIntOrNull() ?: 0 }
                                 if (size.size == 3 && size[0] in 320..4096 && size[1] in 240..3072 &&
@@ -192,7 +284,30 @@ class RelayService : Service() {
         }
     }
 
+    private fun requestApproval(id: String): String {
+        if (id.length != 32 || id.any { it !in '0'..'9' && it !in 'a'..'f' }) return "400 Bad Request"
+        val main = Handler(Looper.getMainLooper())
+        val decision = java.util.concurrent.FutureTask {
+            when {
+                approvedId == id -> "204 No Content"
+                approvedId != null -> "409 Conflict"
+                pendingId == id && SystemClock.elapsedRealtime() < pendingUntil -> "202 Accepted"
+                pendingId != null && SystemClock.elapsedRealtime() < pendingUntil -> "409 Conflict"
+                else -> {
+                    pendingId = id
+                    pendingUntil = SystemClock.elapsedRealtime() + 60_000
+                    report()
+                    "202 Accepted"
+                }
+            }
+        }
+        main.post(decision)
+        return runCatching { decision.get(2, java.util.concurrent.TimeUnit.SECONDS) }.getOrDefault("503 Service Unavailable")
+    }
+
     override fun onDestroy() {
+        hotspot?.close()
+        hotspot = null
         server?.close()
         HostIntegration.headlessSurface = null
         HostIntegration.headlessMetrics = null
